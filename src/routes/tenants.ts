@@ -5,10 +5,15 @@
  * 1. better-auth の organization を作成 (auth.api.createOrganization) し、
  *    その organization.id をそのまま tenants.id として採番する
  * 2. 台帳 (中央 D1 の tenants テーブル) に登録 (UNIQUE違反は409)
- * 3. Cloudflare REST API で新しい D1 データベースを作成
+ * 3. D1 データベースを用意する
+ *    - 本番: Cloudflare REST API で新しい D1 データベースを作成
+ *    - ローカル開発 (isLocalTenantDbMode): D1作成はスキップし、
+ *      wrangler.jsonc の DB_TENANT_LOCAL (共有D1) をそのまま使う。
+ *      台帳の d1DatabaseId には "local" を記録する
+ *      (テナント間のデータ分離は無い。README「ローカル開発」節参照)。
  * 4. テナント DB に初期マイグレーション (migrations-tenant/0001_init.sql) を適用
  *
- * 3-4 のいずれかに失敗した場合は、作成済みの D1 (あれば)・台帳の行・
+ * 3-4 のいずれかに失敗した場合は、作成済みの D1 (あれば・本番のみ)・台帳の行・
  * better-auth の organization レコードをすべて削除し、再試行可能な状態に
  * 戻す(中途半端な"failed"状態を残さない)。ロールバック自体の失敗は
  * console.error でログに残し、クライアントへは元のプロビジョニング失敗
@@ -20,10 +25,14 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { createTenantSchema } from "../shared/schemas";
 import { tenants, member, organization } from "../db/schema";
-import { createTenantDatabase, deleteTenantDatabase, TenantDb } from "../lib/tenant-db";
+import { createTenantDatabase, deleteTenantDatabase } from "../lib/tenant-db";
+import { isLocalTenantDbMode, resolveTenantDb } from "../lib/tenant-db-factory";
 import { createAuth } from "../lib/auth";
 import { requireSession, type SessionEnv } from "../middleware/session";
 import migrationSql from "../../migrations-tenant/0001_init.sql?raw";
+
+/** ローカル開発モードで台帳に記録する d1DatabaseId のセンチネル値。 */
+const LOCAL_DATABASE_ID = "local";
 
 export const tenantsRoute = new Hono<SessionEnv>();
 
@@ -80,39 +89,46 @@ tenantsRoute.post("/", zValidator("json", createTenantSchema), async (c) => {
     return c.json({ error: `台帳登録に失敗しました: ${message}` }, 500);
   }
 
-  // 3-4. D1 作成 + 初期マイグレーション適用。失敗時は台帳・D1をロールバックし
+  // 3-4. D1 用意 + 初期マイグレーション適用。失敗時は台帳・D1をロールバックし
   //      再試行可能な状態に戻す。
+  const localMode = isLocalTenantDbMode(env);
   const cfConfig = {
-    accountId: env.CLOUDFLARE_ACCOUNT_ID,
-    apiToken: env.CLOUDFLARE_API_TOKEN,
+    accountId: env.CLOUDFLARE_ACCOUNT_ID ?? "",
+    apiToken: env.CLOUDFLARE_API_TOKEN ?? "",
   };
   let createdDatabaseId: string | null = null;
 
   try {
-    const created = await createTenantDatabase(cfConfig, `tenant-${slug}`);
-    createdDatabaseId = created.uuid;
+    const databaseId = localMode ? LOCAL_DATABASE_ID : (await createTenantDatabase(cfConfig, `tenant-${slug}`)).uuid;
+    if (!localMode) {
+      createdDatabaseId = databaseId;
+    }
 
-    const tenantDb = new TenantDb(cfConfig, created.uuid);
+    const tenantDb = resolveTenantDb(env, databaseId);
+    if (!tenantDb) {
+      throw new Error("テナントDBの解決に失敗しました");
+    }
     await tenantDb.exec(migrationSql);
 
     await db
       .update(tenants)
-      .set({ d1DatabaseId: created.uuid, status: "active" })
+      .set({ d1DatabaseId: databaseId, status: "active" })
       .where(eq(tenants.id, organizationId));
 
     return c.json({
       id: organizationId,
       slug,
       name,
-      d1DatabaseId: created.uuid,
+      d1DatabaseId: databaseId,
       status: "active",
     });
   } catch (err) {
-    // ロールバック: 作成済みD1・台帳行・better-authのorganizationを削除し、
-    // 再試行可能な状態に戻す。ロールバック自体が失敗しても握りつぶさず
-    // console.error でログに残す(孤立リソースの調査に必要な情報のため)が、
-    // クライアントへは元のプロビジョニング失敗エラーを返す
-    // (ロールバック失敗をユーザ向けエラーにすり替えない)。
+    // ロールバック: 作成済みD1(本番のみ。ローカルは共有DBなので削除しない)・
+    // 台帳行・better-authのorganizationを削除し、再試行可能な状態に戻す。
+    // ロールバック自体が失敗しても握りつぶさず console.error でログに残す
+    // (孤立リソースの調査に必要な情報のため)が、クライアントへは元の
+    // プロビジョニング失敗エラーを返す(ロールバック失敗をユーザ向け
+    // エラーにすり替えない)。
     if (createdDatabaseId) {
       try {
         await deleteTenantDatabase(cfConfig, createdDatabaseId);

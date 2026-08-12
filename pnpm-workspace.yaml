@@ -1,0 +1,18 @@
+# pnpm ワークスペース設定。単一パッケージ構成だが、pnpm 10.x/11.x では
+# minimumReleaseAge / onlyBuiltDependencies 等の設定はここに書く仕様
+# (.npmrc や package.json の "pnpm" フィールドではない)。
+packages:
+  - "."
+
+# サプライチェーン対策: 依存が公開されてから最低7日 (10080分) 経過するまで
+# インストールを許可しない (typosquatting/乗っ取り直後の悪意あるバージョンを
+# 誤って取り込むリスクを下げる)。詳細は README のセキュリティ節を参照。
+minimumReleaseAge: 10080
+
+# pnpm は既定で依存の preinstall/install/postinstall スクリプトを
+# ブロックする (サプライチェーン攻撃対策)。ビルド (ネイティブバイナリ取得等)
+# に本当に必要な依存のみ、ここに明示的に許可を列挙する。
+# 一覧・理由は README のセキュリティ節を参照。
+onlyBuiltDependencies:
+  - esbuild
+  - workerd

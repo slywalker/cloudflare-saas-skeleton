@@ -42,9 +42,12 @@ export function createAuth(env: CloudflareBindings, cf?: Request["cf"]) {
         advanced: {
           // acme.example.com / www.example.com / example.com 間でセッションCookieを
           // 共有するため、ルートドメインを起点に crossSubDomainCookies を有効化する。
-          // ローカル開発 (localhost) では rootDomain が未設定/localhost系のため無効のまま。
+          // rootDomain が "localhost" のローカル開発でも、`acme.localhost` の
+          // ようなHostでテナント動作を確認できるよう同様に有効化する
+          // (Chrome/curl 等の主要クライアントは ".localhost" ドメインの
+          // Cookieを問題なく扱う)。rootDomain が空 (未設定) の場合のみ無効。
           crossSubDomainCookies: {
-            enabled: Boolean(rootDomain) && (rootDomain as string) !== "localhost",
+            enabled: Boolean(rootDomain),
             domain: rootDomain ? `.${rootDomain}` : undefined,
           },
         },

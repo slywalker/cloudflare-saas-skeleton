@@ -1,6 +1,8 @@
 CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_API_TOKEN=
-BETTER_AUTH_SECRET=
+# ローカル開発用の適当な値。本番では必ず十分な長さのランダム文字列を
+# `wrangler secret put BETTER_AUTH_SECRET` で設定すること。
+BETTER_AUTH_SECRET=local-dev-secret-do-not-use-in-production
 
 # ローカル開発時の better-auth ベースURL。wrangler.jsonc の vars.BETTER_AUTH_URL
 # (本番想定値) を .dev.vars 側で上書きする。
@@ -9,3 +11,10 @@ BETTER_AUTH_URL=http://localhost:5173
 # 試したい場合は "localhost" のままでよい (extractSubdomain が localhost系を
 # APP_ROOT_DOMAIN の設定に関わらず常に許容するため)。
 APP_ROOT_DOMAIN=localhost
+
+# テナントDBのローカルモード切り替え。
+# CLOUDFLARE_API_TOKEN を空のままにしておけば自動的にローカルモード
+# (DB_TENANT_LOCAL という共有D1をテナント間で使い回す割り切り) になるため、
+# 通常はこの行はコメントアウトのままでよい。CLOUDFLARE_API_TOKEN を設定した
+# 状態でもローカルモードを強制したい場合のみ有効化する。
+# TENANT_DB_MODE=local

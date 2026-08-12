@@ -12,6 +12,24 @@ export interface CloudflareD1RestConfig {
   apiToken: string;
 }
 
+/**
+ * TenantDb (REST版) / LocalTenantDb (ローカル開発版) の共通インターフェース。
+ * 呼び出し側 (src/routes/tenants.ts, src/index.ts 等) はこのインターフェース
+ * だけに依存し、本番/ローカルどちらのモードかで分岐コードを書かなくて済むように
+ * する (分岐は src/lib/tenant-db-factory.ts に集約する)。
+ */
+export interface TenantStatementLike {
+  bind(...params: unknown[]): TenantStatementLike;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+  first<T = Record<string, unknown>>(): Promise<T | null>;
+  run(): Promise<unknown>;
+}
+
+export interface TenantDbLike {
+  prepare(sql: string): TenantStatementLike;
+  exec(sql: string): Promise<unknown>;
+}
+
 interface CfApiResponse<T> {
   success: boolean;
   errors: { code: number; message: string }[];
@@ -98,7 +116,7 @@ export async function deleteTenantDatabase(
  * 最小クライアント。D1Database の prepare().bind().all() に近い形にして
  * ワーカーのネイティブバインディングと呼び出し感を揃えている。
  */
-export class TenantDb {
+export class TenantDb implements TenantDbLike {
   constructor(
     private readonly config: CloudflareD1RestConfig,
     private readonly databaseId: string
@@ -140,7 +158,7 @@ export class TenantDb {
   }
 }
 
-class TenantStatement {
+class TenantStatement implements TenantStatementLike {
   constructor(
     private readonly config: CloudflareD1RestConfig,
     private readonly databaseId: string,
@@ -194,4 +212,58 @@ export function splitSqlStatements(sql: string): string[] {
     .split(";")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+/**
+ * ローカル開発用の TenantDb 実装。
+ *
+ * 本番はテナント毎に動的作成したD1をREST APIで叩くが、ローカルの
+ * Miniflare にはCloudflare REST APIが存在しない。そこでローカル開発時のみ、
+ * wrangler.jsonc に静的バインディングした共有D1 (DB_TENANT_LOCAL) を
+ * 全テナントで共有する形に割り切る (テナント間のデータ分離は無い)。
+ * `TenantDbLike` インターフェースを実装しているため、呼び出し側
+ * (routes/tenants.ts, middleware/tenant.ts, index.ts) は本番/ローカルの
+ * どちらでも同じコードパスで動く。
+ */
+export class LocalTenantDb implements TenantDbLike {
+  constructor(private readonly d1: D1Database) {}
+
+  prepare(sql: string): TenantStatementLike {
+    return new LocalTenantStatement(this.d1, sql, []);
+  }
+
+  async exec(sql: string): Promise<D1Result[]> {
+    const statements = splitSqlStatements(sql);
+    const results: D1Result[] = [];
+    for (const statement of statements) {
+      results.push(await this.d1.prepare(statement).run());
+    }
+    return results;
+  }
+}
+
+class LocalTenantStatement implements TenantStatementLike {
+  constructor(
+    private readonly d1: D1Database,
+    private readonly sql: string,
+    private readonly params: unknown[]
+  ) {}
+
+  bind(...params: unknown[]): LocalTenantStatement {
+    return new LocalTenantStatement(this.d1, this.sql, params);
+  }
+
+  async all<T = Record<string, unknown>>(): Promise<{ results: T[] }> {
+    const result = await this.d1.prepare(this.sql).bind(...this.params).all<T>();
+    return { results: (result.results ?? []) as T[] };
+  }
+
+  async first<T = Record<string, unknown>>(): Promise<T | null> {
+    const result = await this.d1.prepare(this.sql).bind(...this.params).first<T>();
+    return result ?? null;
+  }
+
+  async run(): Promise<D1Result> {
+    return this.d1.prepare(this.sql).bind(...this.params).run();
+  }
 }

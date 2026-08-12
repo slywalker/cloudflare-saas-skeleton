@@ -1,16 +1,18 @@
 {
   "name": "cloudflare-saas-skeleton",
   "type": "module",
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy --config dist/cloudflare_saas_skeleton/wrangler.json --minify",
+    "deploy": "pnpm run build && wrangler deploy --config dist/cloudflare_saas_skeleton/wrangler.json --minify",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB_CONTROL --local",
-    "db:migrate:remote": "wrangler d1 migrations apply DB_CONTROL --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply DB_CONTROL --remote",
+    "setup:local": "node scripts/setup-local.mjs"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.9.0",

@@ -62,30 +62,36 @@ migrations-tenant/     # テナント D1 用の素の SQL (プロビジョニン
 
 ## セットアップ
 
+パッケージマネージャは pnpm (`package.json` の `packageManager` フィールドで
+バージョン固定)。Node.js に付属の corepack で用意する。
+
 ```bash
-npm install
+corepack enable
+corepack prepare pnpm@10.34.5 --activate   # package.json の packageManager と揃える
+
+pnpm install --frozen-lockfile
 
 # 中央 D1 の作成 (発行された database_id を wrangler.jsonc の
 # d1_databases[0].database_id に反映する)
-npx wrangler d1 create saas-control
+pnpm exec wrangler d1 create saas-control
 
 # セッション/台帳キャッシュ用 KV の作成 (id を wrangler.jsonc の
 # kv_namespaces[0].id に反映する)
-npx wrangler kv namespace create KV
+pnpm exec wrangler kv namespace create KV
 
 # 中央 D1 マイグレーションの適用
-npm run db:migrate:local   # ローカル (wrangler dev 用)
-npm run db:migrate:remote  # 本番
+pnpm run db:migrate:local   # ローカル (wrangler dev 用)
+pnpm run db:migrate:remote  # 本番
 
 # secrets の設定 (機密情報は wrangler.jsonc に書かず secret で渡す)
-npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
-npx wrangler secret put CLOUDFLARE_API_TOKEN   # D1 Edit 権限が必要 (テナントDB作成用)
-npx wrangler secret put BETTER_AUTH_SECRET
+pnpm exec wrangler secret put CLOUDFLARE_ACCOUNT_ID
+pnpm exec wrangler secret put CLOUDFLARE_API_TOKEN   # D1 Edit 権限が必要 (テナントDB作成用)
+pnpm exec wrangler secret put BETTER_AUTH_SECRET
 
-npm run dev      # vite dev (Workers ランタイムと統合)
-npm run build    # 型チェック無しのビルド確認 (client + worker)
-npm run typecheck
-npm run deploy
+pnpm run dev      # vite dev (Workers ランタイムと統合)
+pnpm run build    # 型チェック無しのビルド確認 (client + worker)
+pnpm run typecheck
+pnpm run deploy
 ```
 
 ### CLOUDFLARE_API_TOKEN の作成指針
@@ -105,6 +111,62 @@ npm run deploy
 
 `wrangler.jsonc` の `vars.APP_ROOT_DOMAIN` を実際のベースドメインに、
 `vars.BETTER_AUTH_URL` を実際のオリジンに書き換えること。
+
+## ローカル開発
+
+Cloudflare アカウントを持っていなくても、`git clone → pnpm install --frozen-lockfile → 数コマンド →
+pnpm run dev` だけでサインアップ〜テナント作成〜`/api/items` までひと通り
+動かせる。`@cloudflare/vite-plugin` が Miniflare でD1/KVをローカルに模擬する
+ため、`wrangler.jsonc` の `database_id`/`kv_namespaces[].id` が `"TODO"` の
+プレースホルダのままでも `pnpm run dev` は問題なく起動する
+(Miniflareはこれらの値をローカルの識別子としてのみ使う)。
+
+1. **依存インストール**
+   ```bash
+   pnpm install --frozen-lockfile
+   ```
+2. **一発セットアップ** (`.dev.vars` の用意 + 中央D1へのローカルマイグレーション適用)
+   ```bash
+   pnpm run setup:local
+   ```
+   内部的には次を行っている(個別に実行してもよい):
+   - `.dev.vars.example` → `.dev.vars` のコピー (無ければ)
+   - `pnpm run db:migrate:local` (`wrangler d1 migrations apply DB_CONTROL --local`)
+3. **開発サーバ起動**
+   ```bash
+   pnpm run dev
+   ```
+   `http://localhost:5173` でSPA・APIともに動く。
+4. **テナントのサブドメイン動作を試す**: ブラウザでは `http://acme.localhost:5173`
+   のような URL がそのまま使える(crossSubDomainCookies が有効で、
+   `*.localhost` 間でセッションCookieが共有されるため)。`curl` で試す場合は
+   `--resolve acme.localhost:5173:127.0.0.1` を付けること
+   (`curl` の Cookie ジャーは `.localhost` ワイルドカードドメインの
+   Cookieをクロスホスト送信時に添付しないことがあるため、`curl` での
+   動作確認は `-H "Cookie: <値>"` で明示的に付ける方が確実)。
+
+### テナントDBのローカル対応(核心の割り切り)
+
+本番の `TenantDb` (`src/lib/tenant-db.ts`) は Cloudflare REST API 前提で、
+ローカルには存在しないAPIのため動かない。そこで `src/lib/tenant-db-factory.ts`
+の `resolveTenantDb` が本番/ローカルを自動判定する:
+
+- **判定条件**: `CLOUDFLARE_API_TOKEN` が未設定(`.dev.vars` を埋めていない
+  通常のローカル開発)、または `TENANT_DB_MODE=local` を明示した場合に
+  ローカルモードになる。
+- **ローカルモードの動作**: `wrangler.jsonc` に静的バインディングした
+  `DB_TENANT_LOCAL` という **共有D1を全テナントで使い回す** 、という
+  スケルトンとしての割り切りを行っている。テナント作成時もCloudflare REST
+  APIでのD1作成はスキップし、台帳の `d1DatabaseId` には固定値 `"local"` を
+  記録するだけ。**テナント間のデータ分離はローカルでは無い**
+  (`items` テーブルは全テナント共通)。本番相当のテナント分離を確認したい
+  場合は `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN` を実際に設定して
+  本番モードで動かす必要がある。
+- **インターフェース**: `TenantDb` (REST版) と `LocalTenantDb` (ローカル版)
+  はどちらも共通の `TenantDbLike` インターフェース (`prepare().bind().all()/
+  first()/run()`, `exec()`) を実装しており、呼び出し側 (`routes/tenants.ts`,
+  `middleware/tenant.ts`, `index.ts`) は本番/ローカルを分岐するコードを
+  一切書いていない。
 
 ## D1 の制約に関する注意
 
@@ -133,6 +195,43 @@ npm run deploy
 Stripe 決済、Resend メール送信、Queues、Workflows は本スケルトンの対象外。
 `subscriptions` テーブルと `src/routes/` 以下にディレクトリの空きと TODO
 コメント程度の下地のみ用意している。
+
+## セキュリティ (依存関係・サプライチェーン)
+
+パッケージマネージャは pnpm (`package.json` の `packageManager` フィールドで
+`pnpm@10.34.5` に固定)。以下の3方針でサプライチェーンリスクを下げている。
+設定は `pnpm-workspace.yaml` に集約している(pnpm 10.x/11.x では
+`minimumReleaseAge`/`onlyBuiltDependencies` の正式な設定箇所は
+`.npmrc`/`package.json`の`pnpm`フィールドではなく`pnpm-workspace.yaml`)。
+
+1. **lockfile 厳守**: `pnpm install --frozen-lockfile` を CI・セットアップ
+   手順の両方で使う。`pnpm-lock.yaml` に無いバージョンへ暗黙に解決されることを
+   防ぐ。ローカルで依存を追加/更新した場合は必ず `pnpm-lock.yaml` の差分を
+   コミットに含めること。
+2. **minimumReleaseAge (公開から7日間はインストールしない)**:
+   `pnpm-workspace.yaml` に `minimumReleaseAge: 10080` (分単位=7日) を設定。
+   npmアカウント乗っ取りによる悪意あるバージョンの即時公開・即時流通
+   (2025年以降に実際に多発した攻撃パターン) に対し、公開直後の数日で
+   コミュニティが異常検知・撤回するまでの猶予を稼ぐ。緊急に最新版が必要な
+   パッケージは `minimumReleaseAgeExclude` で個別に除外できる(現状未使用)。
+3. **install スクリプト許可制 (onlyBuiltDependencies)**: pnpm は既定で
+   依存の `preinstall`/`install`/`postinstall` ライフサイクルスクリプトを
+   ブロックする。本プロジェクトで実際にビルド(ネイティブバイナリ取得等)が
+   必要で許可しているのは以下の2つのみ (`pnpm-workspace.yaml` 参照):
+   - **`esbuild`**: `drizzle-kit`(内部の `@esbuild-kit/*`)や `wrangler`
+     経由で必要。postinstallスクリプトがプラットフォーム対応のネイティブ
+     バイナリを取得するために必須(スクリプトを止めるとesbuild自体が
+     動作しない)。
+   - **`workerd`**: `wrangler`/`@cloudflare/vite-plugin`/`miniflare` が
+     ローカル開発 (`pnpm run dev`) で使う Workers ランタイム本体。
+     postinstallでプラットフォーム対応バイナリを取得する。これが無いと
+     `pnpm run dev` 自体が起動しない。
+   これ以外の依存で `Ignored build scripts` 警告が出た場合は、
+   `pnpm why <package>` で依存経路を確認し、本当に必要かを検討してから
+   `onlyBuiltDependencies` に追加すること(安易な許可は避ける)。
+4. **CI での監査**: `.github/workflows/ci.yml` で
+   `pnpm audit --prod --audit-level high` を実行し、本番依存に
+   high以上の既知脆弱性が無いことを毎回確認する(失敗時はCIが赤くなる)。
 
 ## 実装上の判断メモ
 
@@ -168,4 +267,4 @@ Stripe 決済、Resend メール送信、Queues、Workflows は本スケルト�
 - **tsconfig を worker/client で分離**: ルートの `tsconfig.json` は
   `hono/jsx` + Workers 向け型 (`lib: ESNext`のみ)、`tsconfig.client.json` は
   `react` JSX + DOM 型という前提の違いがあるため2ファイルに分割した
-  (`npm run typecheck` は両方を実行する)。
+  (`pnpm run typecheck` は両方を実行する)。

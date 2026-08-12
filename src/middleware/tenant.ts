@@ -6,7 +6,9 @@
  * - サブドメインがある場合、台帳 (中央 D1 の tenants テーブル) を引く。
  *   結果は KV にキャッシュし、リクエスト毎の D1 参照を避ける。
  * - 解決できたテナントは c.set("tenant", ...) で下流に渡し、
- *   REST 経由の TenantDb インスタンスも c.set("tenantDb", ...) で注入する。
+ *   テナントDBアクセスオブジェクト (本番: REST経由のTenantDb, ローカル開発:
+ *   共有D1のLocalTenantDb) も c.set("tenantDb", ...) で注入する
+ *   (どちらを使うかは lib/tenant-db-factory.ts が判定する)。
  *
  * Host ヘッダはクライアントが自由に偽装できるため、本番では
  * wrangler.jsonc の `routes` でこの Worker が応答するホスト名パターンを
@@ -18,7 +20,8 @@ import { createMiddleware } from "hono/factory";
 import { drizzle } from "drizzle-orm/d1";
 import { eq } from "drizzle-orm";
 import { tenants } from "../db/schema";
-import { TenantDb } from "../lib/tenant-db";
+import type { TenantDbLike } from "../lib/tenant-db";
+import { resolveTenantDb } from "../lib/tenant-db-factory";
 
 export interface TenantRecord {
   id: string;
@@ -32,13 +35,18 @@ export type TenantEnv = {
   Bindings: CloudflareBindings;
   Variables: {
     tenant: TenantRecord | null;
-    tenantDb: TenantDb | null;
+    tenantDb: TenantDbLike | null;
   };
 };
 
 const TENANT_CACHE_TTL_SECONDS = 60;
-/** 存在しないテナントへの探索を都度 D1 に流さないための短命ネガティブキャッシュ。 */
-const NOT_FOUND_CACHE_TTL_SECONDS = 10;
+/**
+ * 存在しないテナントへの探索を都度 D1 に流さないための短命ネガティブキャッシュ。
+ * Cloudflare KV の expirationTtl は最小60秒という制約があるため、
+ * 実運用上の最短値である60を採用する (10等のより短いTTLは
+ * `KV PUT failed: 400 Invalid expiration_ttl` で例外になる)。
+ */
+const NOT_FOUND_CACHE_TTL_SECONDS = 60;
 const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 
 /**
@@ -113,15 +121,9 @@ export const tenantMiddleware = createMiddleware<TenantEnv>(async (c, next) => {
   }
 
   c.set("tenant", tenant);
-  c.set(
-    "tenantDb",
-    tenant.d1DatabaseId
-      ? new TenantDb(
-          { accountId: c.env.CLOUDFLARE_ACCOUNT_ID, apiToken: c.env.CLOUDFLARE_API_TOKEN },
-          tenant.d1DatabaseId
-        )
-      : null
-  );
+  // 本番/ローカルの分岐は resolveTenantDb に集約している (ローカルでは
+  // d1DatabaseId の値に関わらず共有D1にフォールバックする)。
+  c.set("tenantDb", resolveTenantDb(c.env, tenant.d1DatabaseId));
 
   await next();
 });

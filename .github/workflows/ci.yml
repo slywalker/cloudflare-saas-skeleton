@@ -1,4 +1,4 @@
-# CI: typecheck and build verification only.
+# CI: typecheck, build, and dependency audit.
 # Deployment is handled by Cloudflare Workers Builds (configured in the
 # Cloudflare dashboard), not by GitHub Actions.
 name: CI
@@ -14,16 +14,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # packageManager フィールド (package.json) からバージョンを解決する。
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
+
+      # 既知の脆弱性(high以上)が紛れ込んでいないかを毎回確認する。
+      # 失敗した場合はCIを red にして人間が確認する運用とする。
+      - name: Audit dependencies (prod, high+)
+        run: pnpm audit --prod --audit-level high
