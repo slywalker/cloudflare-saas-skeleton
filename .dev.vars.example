@@ -1,0 +1,11 @@
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=
+BETTER_AUTH_SECRET=
+
+# ローカル開発時の better-auth ベースURL。wrangler.jsonc の vars.BETTER_AUTH_URL
+# (本番想定値) を .dev.vars 側で上書きする。
+BETTER_AUTH_URL=http://localhost:5173
+# ローカル開発時のルートドメイン。acme.localhost のようなHostでテナント解決を
+# 試したい場合は "localhost" のままでよい (extractSubdomain が localhost系を
+# APP_ROOT_DOMAIN の設定に関わらず常に許容するため)。
+APP_ROOT_DOMAIN=localhost

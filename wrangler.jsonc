@@ -1,0 +1,94 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "cloudflare-saas-skeleton",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-12",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": "./dist/client",
+		"not_found_handling": "single-page-application"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true,
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	/**
+	 * workers.dev サブドメインでの公開を無効化する。テナントのHostヘッダによる
+	 * ルーティングは本番ドメインでのDNS/ルート制御を前提としており、
+	 * workers.dev 経由のアクセスは Host 偽装によるテナント誤解決の余地を生むため。
+	 */
+	"workers_dev": false,
+	/**
+	 * このWorkerが応答するホスト名パターン。ルートドメイン(apex/www)と
+	 * 全サブドメイン(テナント)をカバーする。実際のドメインに置き換えること。
+	 * (例: "example.com/*", "*.example.com/*")
+	 */
+	"routes": [
+		// { "pattern": "example.com/*", "zone_name": "example.com" },
+		// { "pattern": "*.example.com/*", "zone_name": "example.com" }
+	],
+	/**
+	 * 制御プレーン D1 (中央データベース: tenants / better-auth 各テーブル)。
+	 * database_id は `wrangler d1 create <name>` 実行後に発行される値へ置き換えること。
+	 */
+	"d1_databases": [
+		{
+			"binding": "DB_CONTROL",
+			"database_name": "saas-control",
+			"database_id": "TODO",
+			"migrations_dir": "migrations"
+		}
+	],
+	/**
+	 * セッション/テナント台帳キャッシュ用 KV。
+	 * id は `wrangler kv namespace create <name>` 実行後に発行される値へ置き換えること。
+	 */
+	"kv_namespaces": [
+		{
+			"binding": "KV",
+			"id": "TODO"
+		}
+	],
+	/**
+	 * 非機密の環境変数。機密情報 (CLOUDFLARE_API_TOKEN, BETTER_AUTH_SECRET 等) は
+	 * `wrangler secret put <name>` で設定し、ここには書かない。
+	 *
+	 * BETTER_AUTH_URL はここでは本番想定のプレースホルダとし、ローカル開発時の
+	 * 値 (例: http://localhost:5173) は .dev.vars に置く (.dev.vars.example 参照)。
+	 * .dev.vars の値は `wrangler dev` 実行時にこの vars を上書きする。
+	 */
+	"vars": {
+		"APP_ROOT_DOMAIN": "example.com",
+		"BETTER_AUTH_URL": "https://example.com"
+	}
+	/**
+	 * Smart Placement
+	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
+	 */
+	// "placement": {  "mode": "smart" }
+	/**
+	 * Bindings
+	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
+	 * databases, object storage, AI inference, real-time communication and more.
+	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
+	 */
+	/**
+	 * Environment Variables
+	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+	 * Note: Use secrets to store sensitive data.
+	 * https://developers.cloudflare.com/workers/configuration/secrets/
+	 */
+	// "vars": {  "MY_VARIABLE": "production_value" }
+	/**
+	 * Service Bindings (communicate between multiple Workers)
+	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
+	 */
+	// "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
+}
