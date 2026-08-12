@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(.dev.vars)",
+      "Edit(pnpm-lock.yaml)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(node -p 'JSON.parse(require(\"fs\").readFileSync(0,\"utf8\")).tool_input?.file_path ?? \"\"'); case \"$f\" in *.ts|*.tsx) cd \"$CLAUDE_PROJECT_DIR\" && pnpm run typecheck 1>&2 || exit 2;; esac",
+            "timeout": 120,
+            "statusMessage": "Typechecking..."
+          }
+        ]
+      }
+    ]
+  }
+}
