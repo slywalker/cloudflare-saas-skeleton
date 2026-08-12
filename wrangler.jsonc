@@ -92,7 +92,41 @@
 			"binding": "TENANT_MIGRATIONS",
 			"class_name": "TenantMigrationsWorkflow"
 		}
-	]
+	],
+	/**
+	 * ジョブキュー基盤 (src/shared/jobs.ts / src/lib/jobs.ts / src/queues/consumer.ts)。
+	 * Stripe / Resend 等の外部API呼び出しを API ハンドラから直接行わず、必ず
+	 * このキュー経由にする (CLAUDE.md「約束事」)。本番デプロイ前に以下のコマンドで
+	 * キューを作成しておくこと (ローカル dev はキュー作成不要、miniflare がシミュレート):
+	 *   wrangler queues create jobs
+	 *   wrangler queues create jobs-dlq
+	 */
+	"queues": {
+		"producers": [
+			{
+				"binding": "QUEUE_JOBS",
+				"queue": "jobs"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "jobs",
+				"max_batch_size": 10,
+				"max_retries": 3,
+				// リトライ間隔 (秒)。0 (既定) だと失敗直後に即再送されてしまい、
+				// 外部API側の一時障害・レート制限を悪化させかねない (Stripe/Resend
+				// への再試行が短時間に連発する)。60秒空けて様子を見る。
+				"retry_delay": 60,
+				// 同時に処理する consumer インスタンス数の上限。既定では自動スケール
+				// するが、Resend/Stripe 等の外部APIにはレート制限があるため、
+				// 一度に叩きすぎないよう控えめな値に固定する。
+				"max_concurrency": 5,
+				// リトライを使い切ったメッセージの退避先。溜まったメッセージの監視
+				// (アラート等) は未実装 (今後の課題)。
+				"dead_letter_queue": "jobs-dlq"
+			}
+		]
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

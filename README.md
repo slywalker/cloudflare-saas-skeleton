@@ -229,12 +229,68 @@ pnpm run dev` だけでサインアップ〜テナント作成〜`/api/items` �
     複数インスタンスへの分割実行が必要になるが、本スケルトンの
     スコープ外とする。
 
+## Queues (ジョブキュー基盤)
+
+Stripe / Resend 等の外部 API を API ハンドラから直接呼ばない原則
+(CLAUDE.md「約束事」) を支える基盤として、Cloudflare Queues の骨組みを導入
+済み。実際の外部 API 連携 (Stripe決済・Resendメール送信) 自体はスコープ外
+で、ジョブ型とディスパッチのプレースホルダのみ用意している。
+
+- **メッセージ型**: `src/shared/jobs.ts` の `jobMessageSchema`
+  (zod discriminatedUnion)。現状は `email.send` と
+  `stripe.webhook.process` の2種のプレースホルダ。
+- **投入**: `src/lib/jobs.ts` の `enqueueJob(env, job)`。API ハンドラは
+  外部 API を直接呼ばず、必ずこれでキューへ投入すること。
+- **消費**: `src/queues/consumer.ts` の `handleJobsBatch`
+  (`src/index.ts` の default export の `queue` から配線)。
+  - 不正なメッセージ形式 (`jobMessageSchema` でパース不能) はリトライしても
+    直らないため `message.ack()` して破棄する。**この ack は復元不能**:
+    このキューには DLQ 以外の永続化先が無く、ack 済みメッセージはどこにも
+    残らない。そのため ack する前に `message.id` と message.body (先頭
+    2000文字に切り詰め) を必ず `console.error` へ残す。後から調査する
+    場合は Cloudflare の観測性ログ (Logpush 等) を頼ることになる。
+  - ジョブ処理中の例外、および (将来 JobMessage に型を追加した際に consumer
+    側の case 追加が漏れていた場合の) 未知のジョブ種別は `message.retry()`
+    する。`wrangler.jsonc` の `queues.consumers[].max_retries` (3) を
+    使い切ると `dead_letter_queue` (`jobs-dlq`) へ自動的に送られる。
+  - 現状の各 `case` は `console.log` のプレースホルダで、実際の
+    Resend/Stripe 連携は未実装 (TODO コメントを参照)。
+  - switch 文には `default` 節で `const _exhaustive: never = job` による
+    網羅性チェックを入れてあり、`JobMessage` に新しい type を追加したのに
+    consumer 側の case 追加を忘れると `tsc` がコンパイルエラーにする。
+- **本番デプロイ前の準備**: キューは事前に作成しておく必要がある。
+  ```
+  wrangler queues create jobs
+  wrangler queues create jobs-dlq
+  ```
+  `jobs-dlq` の作成を忘れると、`dead_letter_queue` が存在しないキューを
+  指すことになり `wrangler deploy` がエラーで失敗する。
+- **DLQ (`jobs-dlq`) の性質**: DLQ 自体には consumer を配線していない
+  (溜まったメッセージを処理する仕組みは無く、今後の課題)。また Cloudflare
+  Queues のメッセージ保持期間は既定で4日であり、それを過ぎると DLQ に
+  退避したメッセージも失われる。「DLQに送られたので後で必ず追える」わけ
+  ではない点に注意。
+- **ローカルでの動作確認**: `@cloudflare/vite-plugin` (`pnpm run dev`) は
+  wrangler.jsonc の `queues.producers`/`consumers` 設定を miniflare の
+  Worker オプションへ変換して起動する。ローカルの `vite dev` で実際に
+  producer (`enqueueJob`) → consumer (`handleJobsBatch`) → (リトライ枯渇
+  時の) DLQ 退避までの一連の流れを実測済み: 例外を投げるジョブを投入すると
+  初回実行 + `max_retries` (3) 回のリトライの後、メッセージが `jobs-dlq`
+  へ移動することを確認した。キューの事前作成は不要 (ローカルでは
+  miniflare が自動的に用意する)。ただし本スケルトンには `enqueueJob` を
+  実際に呼び出す HTTP ルートがまだ無いため、通常の開発フロー
+  (`pnpm run typecheck` / `pnpm run build` / `pnpm run dev`) の中で
+  日常的に確認する経路は無い。次に Stripe/Resend 連携を実装し
+  `enqueueJob` の呼び出し箇所ができた時点で、通常のエンドツーエンド確認が
+  可能になる。
+
 ## スコープ外 (今回未実装)
 
-Stripe 決済、Resend メール送信、Queues は本スケルトンの対象外。
+Stripe 決済、Resend メール送信の実処理は本スケルトンの対象外。
 `subscriptions` テーブルと `src/routes/` 以下にディレクトリの空きと TODO
-コメント程度の下地のみ用意している。Workflows はテナントDBマイグレーション
-追随のみ実装済み (上記参照)。
+コメント程度の下地のみ用意している。Queues はジョブキュー基盤(上記参照)を
+導入済みだが、Resend/Stripe の実処理自体は未実装。Workflows は
+テナントDBマイグレーション追随のみ実装済み (上記参照)。
 
 ## セキュリティ (依存関係・サプライチェーン)
 

@@ -3,6 +3,8 @@ import { createAuth } from "./lib/auth";
 import { tenantMiddleware, type TenantEnv } from "./middleware/tenant";
 import { requireTenantMember, type TenantAuthzEnv } from "./middleware/authz";
 import { tenantsRoute } from "./routes/tenants";
+import { handleJobsBatch } from "./queues/consumer";
+import type { JobMessage } from "./shared/jobs";
 
 // テナントDB群へのマイグレーション追随バッチ (手動起動: `wrangler workflows
 // trigger tenant-migrations`)。wrangler.jsonc の workflows[].class_name から
@@ -48,4 +50,9 @@ app.route("/api/items", itemsApp);
 // 未知のパスは index.html にフォールバックする。
 app.get("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // wrangler.jsonc の queues.consumers (queue: "jobs") に対応するハンドラ。
+  // 実処理は src/queues/consumer.ts に閉じ込める。
+  queue: handleJobsBatch,
+} satisfies ExportedHandler<CloudflareBindings, JobMessage>;
