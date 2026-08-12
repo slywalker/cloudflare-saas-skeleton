@@ -11,7 +11,8 @@
  *      wrangler.jsonc の DB_TENANT_LOCAL (共有D1) をそのまま使う。
  *      台帳の d1DatabaseId には "local" を記録する
  *      (テナント間のデータ分離は無い。README「ローカル開発」節参照)。
- * 4. テナント DB に初期マイグレーション (migrations-tenant/0001_init.sql) を適用
+ * 4. テナント DB に未適用のマイグレーション (migrations-tenant/*.sql, 昇順) を
+ *    全て適用 (applyPendingMigrations)
  *
  * 3-4 のいずれかに失敗した場合は、作成済みの D1 (あれば・本番のみ)・台帳の行・
  * better-auth の organization レコードをすべて削除し、再試行可能な状態に
@@ -27,9 +28,9 @@ import { createTenantSchema } from "../shared/schemas";
 import { tenants, member, organization } from "../db/schema";
 import { createTenantDatabase, deleteTenantDatabase } from "../lib/tenant-db";
 import { isLocalTenantDbMode, resolveTenantDb } from "../lib/tenant-db-factory";
+import { applyPendingMigrations } from "../lib/tenant-migrate";
 import { createAuth } from "../lib/auth";
 import { requireSession, type SessionEnv } from "../middleware/session";
-import migrationSql from "../../migrations-tenant/0001_init.sql?raw";
 
 /** ローカル開発モードで台帳に記録する d1DatabaseId のセンチネル値。 */
 const LOCAL_DATABASE_ID = "local";
@@ -108,7 +109,7 @@ tenantsRoute.post("/", zValidator("json", createTenantSchema), async (c) => {
     if (!tenantDb) {
       throw new Error("テナントDBの解決に失敗しました");
     }
-    await tenantDb.exec(migrationSql);
+    await applyPendingMigrations(tenantDb);
 
     await db
       .update(tenants)

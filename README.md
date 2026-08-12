@@ -183,18 +183,58 @@ pnpm run dev` だけでサインアップ〜テナント作成〜`/api/items` �
   間はネイティブバインディングへの切り替えも検討候補。
 - テナント D1 の作成・削除は Cloudflare アカウント単位の **D1 データベース数
   上限** (プラン依存) に影響される。
-- **テナントDB群へのマイグレーション追随は未実装**。`migrations-tenant/`
-  以下に新しいマイグレーションファイルを追加しても、既存の全テナントDBへ
-  自動で適用する仕組みは今のところ無い(プロビジョニング時に最新の
-  `0001_init.sql` を適用するだけ)。テナント数が増えた際は Workflows で
-  「全テナントを列挙して順にマイグレーションSQLを流す」バッチ処理を実装する
-  予定 (今回のスコープ外)。
+- **テナントDB群へのマイグレーション追随**: `migrations-tenant/*.sql` は
+  ファイル名昇順に管理される。新規テナントのプロビジョニング時
+  (`POST /api/tenants`) は未適用分を全て順に適用する
+  (`src/lib/tenant-migrate.ts` の `applyPendingMigrations`。適用済みかどうかは
+  各テナントDBの `d1_tenant_migrations` 管理表で判定する)。
+  既存テナント群への追随は Cloudflare Workflows
+  (`src/workflows/tenant-migrations.ts`, binding: `TENANT_MIGRATIONS`) が
+  台帳から `status = 'active'` かつ `d1DatabaseId` 設定済みのテナント
+  (または `tenantIds` で指定した対象) を列挙し、テナント毎に
+  `applyPendingMigrations` を適用する。1テナントの失敗
+  (リトライを使い切った場合を含む) が他テナントへの適用を止めないよう
+  テナント毎に独立した Workflow step にしてあるが、失敗が1件でもあれば
+  最後に Error を投げて **Workflow インスタンス自体は失敗ステータスで
+  終わる** (実行結果とログには成功/失敗の内訳を残す)。テナントDBが
+  解決できない場合 (secrets 未設定など) はリトライせず即座に失敗する
+  (`NonRetryableError`)。
+  - **新しいマイグレーションの追加手順**: `migrations-tenant/000N_xxx.sql`
+    を追加 → デプロイ → `wrangler workflows trigger tenant-migrations` で
+    既存テナントに追随させる。`{"tenantIds": ["..."]}` を渡すと対象を絞れる
+    (空配列は検証エラーになる。「全件」を意図する場合は `tenantIds` 自体を
+    省略すること)。
+  - **同時実行**: 進捗管理表への書き込みに行ロック等の排他制御は無いため、
+    同一テナントDBに対して `wrangler workflows trigger tenant-migrations`
+    を多重起動しない運用を前提とする。
+  - **ローカルでの挙動**: `TENANT_DB_MODE=local` は全テナントが共有D1
+    (`DB_TENANT_LOCAL`) に同居するため、`d1_tenant_migrations` 管理表も
+    共有になり、実質「DB全体に対して1回だけ」適用される (テナント毎の
+    個別履歴にはならない)。Workflow は `TENANT_DB_MODE=local` が明示されて
+    いる場合のみローカルDBを使い、それ以外で本番用 secrets が欠けている
+    場合は (意図せずローカルへフォールバックせず) 即座に失敗する。
+  - **導入前に作成済みのテナントDBとの互換性**: この仕組み導入前に
+    プロビジョニングされたテナントDBには `d1_tenant_migrations` 管理表が
+    無いため、初回実行時に `0001_init.sql` が (管理表作成後) 未適用扱いで
+    再適用される。同ファイルは `IF NOT EXISTS` のみで構成されているため
+    無害。
+  - **新規マイグレーション作成時の注意**: 適用は `src/lib/tenant-db.ts` の
+    `splitSqlStatements` で `;` 区切りに分割してから1文ずつ実行するため、
+    ブロックコメント (`/* */`) やトリガ定義・文字列リテラル内の `;`/`--` は
+    未対応。既存の `0001_init.sql` と同じ書式 (行コメント `--`、文末 `;`)
+    に揃え、各文は極力冪等 (`IF NOT EXISTS` 等) に書くこと。
+  - **スケール上の制約 (スコープ外)**: テナント数が数千規模になると、
+    Workflow の総ステップ数上限や1回の実行結果のペイロードサイズ上限に
+    抵触しうる。その場合は `tenantIds` によるチャンク分割起動、または
+    複数インスタンスへの分割実行が必要になるが、本スケルトンの
+    スコープ外とする。
 
 ## スコープ外 (今回未実装)
 
-Stripe 決済、Resend メール送信、Queues、Workflows は本スケルトンの対象外。
+Stripe 決済、Resend メール送信、Queues は本スケルトンの対象外。
 `subscriptions` テーブルと `src/routes/` 以下にディレクトリの空きと TODO
-コメント程度の下地のみ用意している。
+コメント程度の下地のみ用意している。Workflows はテナントDBマイグレーション
+追随のみ実装済み (上記参照)。
 
 ## セキュリティ (依存関係・サプライチェーン)
 

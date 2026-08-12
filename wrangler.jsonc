@@ -80,7 +80,19 @@
 	"vars": {
 		"APP_ROOT_DOMAIN": "example.com",
 		"BETTER_AUTH_URL": "https://example.com"
-	}
+	},
+	/**
+	 * テナントDB群へのマイグレーション追随バッチ (src/workflows/tenant-migrations.ts)。
+	 * `migrations-tenant/*.sql` の未適用分を全テナントD1へ順に適用する。
+	 * 手動起動のみを想定 (HTTPルートは無い): `wrangler workflows trigger tenant-migrations`
+	 */
+	"workflows": [
+		{
+			"name": "tenant-migrations",
+			"binding": "TENANT_MIGRATIONS",
+			"class_name": "TenantMigrationsWorkflow"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

@@ -30,3 +30,25 @@ export function resolveTenantDb(env: CloudflareBindings, d1DatabaseId: string | 
   }
   return new TenantDb({ accountId: env.CLOUDFLARE_ACCOUNT_ID, apiToken: env.CLOUDFLARE_API_TOKEN }, d1DatabaseId);
 }
+
+/**
+ * `resolveTenantDb` の「暗黙のローカルフォールバック」(CLOUDFLARE_API_TOKEN
+ * 未設定時に自動でローカルモード扱いする挙動) を許さない厳格版。
+ *
+ * 全テナントへ一括で書き込みを行う Workflow (workflows/tenant-migrations.ts)
+ * のような処理では、本番のつもりで secrets 設定を誤った/取りこぼした場合に
+ * 「静かにローカル共有DBへフォールバックして本番テナントには何も適用され
+ * ない」という事故を避けたい。そのため `TENANT_DB_MODE=local` の明示が
+ * ある場合のみローカルモードとし、それ以外で本番用の secrets が欠けて
+ * いる場合は null を返す (呼び出し側は NonRetryableError 等で即座に
+ * 失敗させること)。
+ */
+export function resolveTenantDbStrict(env: CloudflareBindings, d1DatabaseId: string | null): TenantDbLike | null {
+  if (env.TENANT_DB_MODE === "local") {
+    return new LocalTenantDb(env.DB_TENANT_LOCAL);
+  }
+  if (!d1DatabaseId || !env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) {
+    return null;
+  }
+  return new TenantDb({ accountId: env.CLOUDFLARE_ACCOUNT_ID, apiToken: env.CLOUDFLARE_API_TOKEN }, d1DatabaseId);
+}

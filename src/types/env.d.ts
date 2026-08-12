@@ -22,5 +22,13 @@ declare global {
      * 通常は未設定のままでよい (.dev.vars.example 参照)。
      */
     TENANT_DB_MODE?: "local";
+    /**
+     * テナントDB群へのマイグレーション追随バッチ (src/workflows/tenant-migrations.ts)。
+     * `wrangler types` は workflows[] からもバインディング型を生成できるが、
+     * このプロジェクトは env.d.ts での手動管理に統一しているため、
+     * wrangler.jsonc の `workflows` binding 名と合わせてここに追記する
+     * (wrangler.jsonc 変更時は両方を更新すること)。
+     */
+    TENANT_MIGRATIONS: Workflow;
   }
 }

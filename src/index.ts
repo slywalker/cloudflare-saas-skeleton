@@ -4,6 +4,11 @@ import { tenantMiddleware, type TenantEnv } from "./middleware/tenant";
 import { requireTenantMember, type TenantAuthzEnv } from "./middleware/authz";
 import { tenantsRoute } from "./routes/tenants";
 
+// テナントDB群へのマイグレーション追随バッチ (手動起動: `wrangler workflows
+// trigger tenant-migrations`)。wrangler.jsonc の workflows[].class_name から
+// 参照されるため、Worker のエントリポイントから re-export しておく必要がある。
+export { TenantMigrationsWorkflow } from "./workflows/tenant-migrations";
+
 const app = new Hono<TenantEnv>();
 
 // Host ヘッダのサブドメインからテナントを解決し、c.set("tenant"/"tenantDb") する。

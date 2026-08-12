@@ -20,9 +20,10 @@ Cloudflare 上のマルチテナント SaaS の「型」となるスケルトン
 
 - better-auth のスキーマは手書き(`src/db/schema.ts`)。better-auth を更新したら、プラグインが要求する列(例: `invitation.createdAt`)との整合を必ず確認する。
 - Stripe / Resend 等の外部 API を API ハンドラから直接呼ばない。必ず Queues を挟む(未実装、導入時の原則)。
+- テナントDB群へのマイグレーション追随は実装済み(`src/workflows/tenant-migrations.ts`、binding: `TENANT_MIGRATIONS`)。新規マイグレーションは `migrations-tenant/000N_xxx.sql` を追加 → デプロイ → `wrangler workflows trigger tenant-migrations` で追随させる。適用ロジックは `src/lib/tenant-migrate.ts`(`applyPendingMigrations`)に集約し、プロビジョニング(`src/routes/tenants.ts`)と Workflow の両方から使う。
 - 依存管理は pnpm。`pnpm-lock.yaml` の手編集禁止。新しい lifecycle script が必要な依存は `pnpm-workspace.yaml` の `onlyBuiltDependencies` に理由付きで追加し、README のセキュリティ節も更新する。
 - zod スキーマは `src/shared/` に置き、サーバ(@hono/zod-validator)とクライアントで共有する。
-- 検証コマンド: `pnpm run typecheck` / `pnpm run build`。テナント DB 群へのマイグレーション追随は未実装(Workflows で実装予定)。
+- 検証コマンド: `pnpm run typecheck` / `pnpm run build`。テナント DB 群へのマイグレーション追随は Workflows(`TENANT_MIGRATIONS`)で実装済み(下記参照)。
 
 ## コミュニケーション
 
