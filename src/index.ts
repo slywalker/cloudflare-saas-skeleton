@@ -3,6 +3,7 @@ import { createAuth } from "./lib/auth";
 import { tenantMiddleware, type TenantEnv } from "./middleware/tenant";
 import { requireTenantMember, type TenantAuthzEnv } from "./middleware/authz";
 import { tenantsRoute } from "./routes/tenants";
+import { debugRoute, isLocalDebugMode } from "./routes/debug";
 import { handleJobsBatch } from "./queues/consumer";
 import type { JobMessage } from "./shared/jobs";
 
@@ -11,7 +12,7 @@ import type { JobMessage } from "./shared/jobs";
 // 参照されるため、Worker のエントリポイントから re-export しておく必要がある。
 export { TenantMigrationsWorkflow } from "./workflows/tenant-migrations";
 
-const app = new Hono<TenantEnv>();
+export const app = new Hono<TenantEnv>();
 
 // Host ヘッダのサブドメインからテナントを解決し、c.set("tenant"/"tenantDb") する。
 // ルートドメイン (apex/www) は素通しし、SPA・認証ルートに委ねる。
@@ -44,6 +45,21 @@ itemsApp.get("/", async (c) => {
   return c.json({ items: results });
 });
 app.route("/api/items", itemsApp);
+
+// ローカル開発専用のデバッグルート。マウント自体は常に行うが、
+// このミドルウェアが毎リクエスト env を見て `TENANT_DB_MODE=local` の
+// ときのみ debugRoute へ進む。ガード不成立時は SPA フォールバックと
+// 全く同じ応答 (`ASSETS.fetch`) を返し、未知パスと応答を不可分にする
+// (「既知パスだけ 404 になる」ことで /debug の存在が露見するのを防ぐ。
+// 詳細は src/routes/debug.ts 冒頭コメント参照)。debugRoute 内部にも
+// 同条件の保険を重ねてある (多重防御)。
+app.use("/debug/*", async (c, next) => {
+  if (!isLocalDebugMode(c.env)) {
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  await next();
+});
+app.route("/debug", debugRoute);
 
 // 上記以外は SPA (Workers Static Assets) に委ねる。
 // wrangler.jsonc の assets.not_found_handling: "single-page-application" により

@@ -91,6 +91,7 @@ pnpm exec wrangler secret put BETTER_AUTH_SECRET
 pnpm run dev      # vite dev (Workers ランタイムと統合)
 pnpm run build    # 型チェック無しのビルド確認 (client + worker)
 pnpm run typecheck
+pnpm run test     # @cloudflare/vitest-pool-workers 経由で workerd (miniflare) 上でユニット/統合テストを実行
 pnpm run deploy
 ```
 
@@ -144,6 +145,93 @@ pnpm run dev` だけでサインアップ〜テナント作成〜`/api/items` �
    (`curl` の Cookie ジャーは `.localhost` ワイルドカードドメインの
    Cookieをクロスホスト送信時に添付しないことがあるため、`curl` での
    動作確認は `-H "Cookie: <値>"` で明示的に付ける方が確実)。
+5. **開発用データの投入 (任意)**: `pnpm run dev` を起動したまま別ターミナルで
+   ```bash
+   pnpm run seed:local
+   ```
+   を実行すると、以下のアカウント/テナントを冪等に作成する
+   (`scripts/seed-local.mjs`。既に存在する場合はサインインに切り替え、
+   テナント slug が既に使われていればスキップするため、何度実行しても壊れない)。
+
+   | email | password | tenant (slug) |
+   | --- | --- | --- |
+   | alice@example.com | Passw0rd!local | Acme Inc (acme) |
+   | bob@example.com | Passw0rd!local | Widget Co (widgetco) |
+   | eve@example.com | Passw0rd!local | (所属なし) |
+
+   **ローカル専用。上記パスワードは本リポジトリに平文で公開されている。**
+   `SEED_BASE_URL` 環境変数でリクエスト先を差し替えられるが、
+   `scripts/seed-local.mjs` は hostname が `localhost`/`127.0.0.1`/`::1`/
+   `*.localhost` のいずれでもない場合は実行前に中断する
+   (本番/ステージング等の外部URLを誤って指定し、公開済みパスワードの
+   owner アカウントを作ってしまう事故を防ぐため)。
+
+### クイックスタート (まとめ)
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run setup:local
+pnpm run dev            # 別ターミナルのまま起動を継続
+pnpm run seed:local      # dev サーバ起動後、別ターミナルで実行
+```
+
+### ローカル環境のリセット (`reset:local`)
+
+`.wrangler/state/v3` 配下の D1/KV/Workflow/DurableObject のローカル状態を
+初期化したい場合(壊れたローカルDB状態から作り直したい、認証データを全消し
+したい等) は次を実行する。
+
+```bash
+pnpm run reset:local
+```
+
+`scripts/reset-local.mjs` は `.wrangler/state/v3/{d1,kv,workflows,do}` の
+4ディレクトリのみを削除し、中央D1 (`DB_CONTROL`) へのローカルマイグレーション
+適用を再実行する(`workflows`/`do` を含めるのは、D1 だけ消して
+`TENANT_MIGRATIONS` Workflow の実行インスタンス状態が残ると、存在しない
+データを参照したまま不整合になりうるため)。削除前に対象パスが
+`.wrangler/state/v3/` 配下であることを検証する保険的チェックはあるが、
+削除対象は固定リストのみで外部入力を受け付けないため、現状はこのチェックが
+発火する経路は無い(将来、削除対象がパラメータ化された場合の保険)。
+seed までは自動で行わないため、実行後は `pnpm run dev` → `pnpm run
+seed:local` の順で復元すること。
+
+### デバッグルート (`/debug/*`, ローカル専用)
+
+`src/routes/debug.ts` は開発時の動作確認用ルートを提供する。
+`env.TENANT_DB_MODE === "local"` のときだけ有効になり、それ以外
+(=本番相当) では常に 404 を返す (詳細はファイル冒頭コメント参照)。
+**本番では `TENANT_DB_MODE` を設定しないこと。設定するとこれらのルートが
+開いてしまう。**
+
+- `POST /debug/enqueue` — body を `jobMessageSchema` で検証してから
+  `enqueueJob` で正常投入する (Queues 動作確認用)。
+  ```bash
+  curl -X POST http://localhost:5173/debug/enqueue \
+    -H "Content-Type: application/json" \
+    -d '{"type":"email.send","to":"a@example.com","subject":"hi","body":"hello"}'
+  ```
+  `?raw=1` を付けると検証を迂回して `QUEUE_JOBS.send` に body をそのまま
+  投入できる (consumer の不正メッセージ処理 = ack して破棄、を確認する用途)。
+  ```bash
+  curl -X POST "http://localhost:5173/debug/enqueue?raw=1" \
+    -H "Content-Type: application/json" -d '{"garbage":true}'
+  ```
+- `POST /debug/trigger-migrations` — body (任意で `{"tenantIds": [...]}`) を
+  検証し `TENANT_MIGRATIONS.create()` で Workflow を起動する。
+  ```bash
+  curl -X POST http://localhost:5173/debug/trigger-migrations \
+    -H "Content-Type: application/json" -d '{}'
+  ```
+- `GET /debug/tenant-migrations` — 共有ローカルD1 (`DB_TENANT_LOCAL`) の
+  `d1_tenant_migrations` 管理表を全件返す。
+  ```bash
+  curl http://localhost:5173/debug/tenant-migrations
+  ```
+- `GET /debug/tenants` — 台帳 (`tenants` テーブル) を全件返す。
+  ```bash
+  curl http://localhost:5173/debug/tenants
+  ```
 
 ### テナントDBのローカル対応(核心の割り切り)
 
@@ -270,6 +358,12 @@ Stripe / Resend 等の外部 API を API ハンドラから直接呼ばない原
   Queues のメッセージ保持期間は既定で4日であり、それを過ぎると DLQ に
   退避したメッセージも失われる。「DLQに送られたので後で必ず追える」わけ
   ではない点に注意。
+- **ローカルで DLQ (`jobs-dlq`) の中身を確認する手段**: 現状無い。
+  `wrangler.jsonc` に `jobs-dlq` 用の consumer を追加すれば覗けそうに見えるが、
+  それは本番の `wrangler.jsonc` にもそのまま効いてしまう (環境別に consumer
+  設定を出し分ける安全な方法は未確認) ため、あえて追加していない。
+  リトライ枯渇時は consumer 側 (`src/queues/consumer.ts`) の `console.error`
+  ログ (message.id・truncateしたbody) で代替すること。
 - **ローカルでの動作確認**: `@cloudflare/vite-plugin` (`pnpm run dev`) は
   wrangler.jsonc の `queues.producers`/`consumers` 設定を miniflare の
   Worker オプションへ変換して起動する。ローカルの `vite dev` で実際に
@@ -277,11 +371,10 @@ Stripe / Resend 等の外部 API を API ハンドラから直接呼ばない原
   時の) DLQ 退避までの一連の流れを実測済み: 例外を投げるジョブを投入すると
   初回実行 + `max_retries` (3) 回のリトライの後、メッセージが `jobs-dlq`
   へ移動することを確認した。キューの事前作成は不要 (ローカルでは
-  miniflare が自動的に用意する)。ただし本スケルトンには `enqueueJob` を
-  実際に呼び出す HTTP ルートがまだ無いため、通常の開発フロー
-  (`pnpm run typecheck` / `pnpm run build` / `pnpm run dev`) の中で
-  日常的に確認する経路は無い。次に Stripe/Resend 連携を実装し
-  `enqueueJob` の呼び出し箇所ができた時点で、通常のエンドツーエンド確認が
+  miniflare が自動的に用意する)。`POST /debug/enqueue` (上記「デバッグ
+  ルート」節参照) で `enqueueJob` を任意に呼び出せるため、通常の開発フロー
+  の中でも手軽に確認できる。次に Stripe/Resend 連携を実装し実プロダクト
+  コードから `enqueueJob` を呼ぶ箇所ができた時点で、より実運用に近い
   可能になる。
 
 ## スコープ外 (今回未実装)
@@ -328,6 +421,21 @@ Stripe 決済、Resend メール送信の実処理は本スケルトンの対象
 4. **CI での監査**: `.github/workflows/ci.yml` で
    `pnpm audit --prod --audit-level high` を実行し、本番依存に
    high以上の既知脆弱性が無いことを毎回確認する(失敗時はCIが赤くなる)。
+5. **`overrides` によるバージョン固定 (`pnpm-workspace.yaml`)**: Cloudflare 系
+   パッケージ (`wrangler`/`@cloudflare/workers-types` 等) はほぼ毎日リリースされる
+   ため、`minimumReleaseAge` の判定対象になる推移的依存が「7日以内に公開された
+   バージョンしか存在しない」状態に頻繁に陥る(特に `vite` の `rolldown` optional
+   バイナリ群や `@cloudflare/workers-types` は、他の依存から要求される range の
+   最新版が毎回直近数日以内の公開になりやすい)。これを `pnpm add`/`pnpm install`
+   のたびに手動で回避しなくて済むよう、7日以上経過した mature なバージョンへ
+   明示的に固定している:
+   - `rolldown`: `vite` の内部依存 (`~1.2.1` 相当の範囲内で mature な版に固定)。
+   - `@cloudflare/workers-types`: `wrangler`/`better-auth` 系が要求する
+     `>=4`/`^5.x` 範囲内で mature な版に固定。
+   これらは新しい脆弱性を許容する緩和ではなく、逆に「7日ルールを機械的に
+   満たせない (公開されて日が浅いバージョンしか存在しない) 状況」を、
+   固定的に mature なバージョンへ倒すことで解消するための措置。バージョンを
+   更新する際は、固定先を新しい mature バージョンへ手動で更新すること。
 
 ## 実装上の判断メモ
 

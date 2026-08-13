@@ -1,0 +1,24 @@
+/**
+ * テストコード (src/**\/*.test.ts) 専用の型チェック設定。
+ *
+ * @cloudflare/vitest-pool-workers が提供する `cloudflare:test` の型 (env, SELF等)
+ * はメインの tsconfig.json (worker-configuration.d.ts ベース) には含めない。
+ * worker-configuration.d.ts を再生成せずに済ませつつ、テストファイルだけ
+ * 別プロファイルで型チェックする (CLAUDE.md「worker-configuration.d.ts は
+ * 再生成しない」方針への対応)。
+ */
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": ["ESNext"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
+    "noEmit": true,
+    "types": ["@cloudflare/vitest-pool-workers", "./worker-configuration.d.ts", "vite/client", "node"]
+  },
+  "include": ["src/**/*.test.ts", "src/types/env.d.ts", "src/types/test-env.d.ts", "vitest.config.ts"]
+}

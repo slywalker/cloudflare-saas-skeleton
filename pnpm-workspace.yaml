@@ -16,3 +16,19 @@ minimumReleaseAge: 10080
 onlyBuiltDependencies:
   - esbuild
   - workerd
+
+# バージョン固定 (pnpm 10.x は package.json の "pnpm.overrides" ではなく
+# ワークスペースファイル側の overrides もサポートするため、規約通りここに
+# 集約する)。Cloudflare 系パッケージ (`wrangler`/`@cloudflare/workers-types`
+# 等) はほぼ毎日リリースされるため、`minimumReleaseAge` の判定対象になる
+# 推移的依存が「7日以内に公開されたバージョンしか存在しない」状態に頻繁に
+# 陥る。これを回避するため、7日以上経過した mature なバージョンへ明示的に
+# 固定している (詳細は README のセキュリティ節参照)。
+overrides:
+  # vite の内部依存。現行 vite が要求する range (~1.2.1 相当) の中で mature な
+  # 版に固定。この固定は vite 側の要求 range が変わったら追随して見直すこと
+  # (range 外になると `pnpm install` が解決エラーになるため、更新を機械的に
+  # 検知できる)。
+  rolldown: 1.2.3
+  # wrangler/better-auth 系が要求する `>=4`/`^5.x` 範囲内で mature な版に固定。
+  "@cloudflare/workers-types": 5.20260804.1

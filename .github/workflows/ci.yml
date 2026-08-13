@@ -1,4 +1,4 @@
-# CI: typecheck, build, and dependency audit.
+# CI: typecheck, test, build, and dependency audit.
 # Deployment is handled by Cloudflare Workers Builds (configured in the
 # Cloudflare dashboard), not by GitHub Actions.
 name: CI
@@ -27,6 +27,10 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+      # @cloudflare/vitest-pool-workers 経由で workerd (miniflare) 上でテストを実行する。
+      - name: Test
+        run: pnpm run test
 
       - name: Build
         run: pnpm run build

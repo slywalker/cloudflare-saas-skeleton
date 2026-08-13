@@ -14,6 +14,8 @@ Cloudflare 上のマルチテナント SaaS の「型」となるスケルトン
 - `TENANT_DB_MODE=local`(`.dev.vars`)では REST API を使わず、共有ローカル D1 `DB_TENANT_LOCAL` に全テナントが同居する。**テナント間のデータ分離はローカルでは検証できない**。
 - 台帳の `d1DatabaseId` はローカルでは文字列 `"local"`。
 - 初回は `pnpm run setup:local`(.dev.vars 生成+中央 D1 マイグレーション適用)。
+- `pnpm run dev` 起動後、`pnpm run seed:local` で開発用アカウント/テナント(alice/bob/eve)を冪等に投入できる(`scripts/seed-local.mjs`)。ローカル状態を初期化したい場合は `pnpm run reset:local`(D1/KVのみ削除+マイグレーション再適用。seedは別途)。
+- `env.TENANT_DB_MODE === "local"` の間だけ `/debug/*`(`src/routes/debug.ts`)が有効。enqueue/Workflow起動/台帳・マイグレーション管理表の閲覧が可能(本番で `TENANT_DB_MODE` を設定しないこと)。
 - `compatibility_date` はローカル workerd の対応上限に合わせてある。安易に日付を進めると `pnpm run dev` が起動しなくなる。
 
 ## 約束事
@@ -23,7 +25,7 @@ Cloudflare 上のマルチテナント SaaS の「型」となるスケルトン
 - テナントDB群へのマイグレーション追随は実装済み(`src/workflows/tenant-migrations.ts`、binding: `TENANT_MIGRATIONS`)。新規マイグレーションは `migrations-tenant/000N_xxx.sql` を追加 → デプロイ → `wrangler workflows trigger tenant-migrations` で追随させる。適用ロジックは `src/lib/tenant-migrate.ts`(`applyPendingMigrations`)に集約し、プロビジョニング(`src/routes/tenants.ts`)と Workflow の両方から使う。
 - 依存管理は pnpm。`pnpm-lock.yaml` の手編集禁止。新しい lifecycle script が必要な依存は `pnpm-workspace.yaml` の `onlyBuiltDependencies` に理由付きで追加し、README のセキュリティ節も更新する。
 - zod スキーマは `src/shared/` に置き、サーバ(@hono/zod-validator)とクライアントで共有する。
-- 検証コマンド: `pnpm run typecheck` / `pnpm run build`。テナント DB 群へのマイグレーション追随は Workflows(`TENANT_MIGRATIONS`)で実装済み(下記参照)。
+- 検証コマンド: `pnpm run typecheck` / `pnpm run test` / `pnpm run build`。テストは `@cloudflare/vitest-pool-workers` 経由で workerd (miniflare) 上で実行する(`vitest.config.ts`)。テナント DB 群へのマイグレーション追随は Workflows(`TENANT_MIGRATIONS`)で実装済み(下記参照)。
 
 ## コミュニケーション
 
