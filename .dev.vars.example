@@ -12,9 +12,12 @@ BETTER_AUTH_URL=http://localhost:5173
 # APP_ROOT_DOMAIN の設定に関わらず常に許容するため)。
 APP_ROOT_DOMAIN=localhost
 
-# テナントDBのローカルモード切り替え。
-# CLOUDFLARE_API_TOKEN を空のままにしておけば自動的にローカルモード
-# (DB_TENANT_LOCAL という共有D1をテナント間で使い回す割り切り) になるため、
-# 通常はこの行はコメントアウトのままでよい。CLOUDFLARE_API_TOKEN を設定した
-# 状態でもローカルモードを強制したい場合のみ有効化する。
-# TENANT_DB_MODE=local
+# テナントDBのローカルモード (DB_TENANT_LOCAL という共有D1をテナント間で
+# 使い回す割り切り)。
+# HTTPリクエスト経路 (resolveTenantDb) は CLOUDFLARE_API_TOKEN が空なら
+# 自動的にローカルモードへフォールバックするが、Workflow
+# (tenant-migrations) は事故防止のため暗黙フォールバックを許さず、
+# この明示指定が無いと TenantDbUnresolvable で失敗する
+# (src/lib/tenant-db-factory.ts の resolveTenantDbStrict 参照)。
+# ローカル開発では常に有効にしておくこと。
+TENANT_DB_MODE=local
